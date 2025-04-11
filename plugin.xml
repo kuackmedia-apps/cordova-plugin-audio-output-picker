@@ -20,6 +20,9 @@
 
         <source-file src="src/android/AudioOutputPickerPlugin.java"
                      target-dir="src/com/kuackmedia/plugins/audiooutputpicker/"/>
+
+        <!-- Añade esta dependencia -->
+        <framework src="androidx.mediarouter:mediarouter:1.6.0" />
     </platform>
 
 </plugin>

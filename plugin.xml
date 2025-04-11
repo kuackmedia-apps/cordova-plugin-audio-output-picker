@@ -1,0 +1,11 @@
+<!-- plugin.xml -->
+<platform name="android">
+    <config-file target="res/xml/config.xml" parent="/*">
+        <feature name="AudioOutputPicker">
+            <param name="android-package" value="com.kuackmedia.plugins.audiooutputpicker.AudioOutputPickerPlugin"/>
+        </feature>
+    </config-file>
+
+    <source-file src="src/android/AudioOutputPickerPlugin.java"
+                 target-dir="src/com/kuackmedia/plugins/audiooutputpicker/" />
+</platform>

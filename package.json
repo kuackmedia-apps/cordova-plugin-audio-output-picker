@@ -1,0 +1,25 @@
+{
+  "name": "cordova-plugin-audio-output-picker",
+  "version": "1.0.0",
+  "description": "Plugin Cordova para lanzar el menú nativo de selección de salida de audio",
+  "cordova": {
+    "id": "cordova-plugin-audio-output-picker",
+    "platforms": [
+      "android"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kuackmedia-apps/cordova-plugin-audio-output-picker.git"
+  },
+  "keywords": [
+    "cordova",
+    "audio",
+    "output",
+    "picker",
+    "ecosystem:cordova",
+    "cordova-android"
+  ],
+  "author": "Kuackmedia",
+  "license": "MIT"
+}

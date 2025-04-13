@@ -75,20 +75,20 @@ public class AudioOutputPickerPlugin extends CordovaPlugin {
                     if (deviceInfo.isSink()) {
                         int type = deviceInfo.getType();
                         if (type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
-                            result.put("type", "bluetooth");
-                            result.put("name", deviceInfo.getProductName());
+                            result.put("deviceType", "bluetooth");
+                            result.put("deviceName", deviceInfo.getProductName());
                             return result;
                         } else if (type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES || type == AudioDeviceInfo.TYPE_WIRED_HEADSET) {
-                            result.put("type", "wired_headset");
-                            result.put("name", "Auriculares cableados");
+                            result.put("deviceType", "wired_headset");
+                            result.put("deviceName", "Auriculares cableados");
                             return result;
                         }
                     }
                 }
             }
             // Default
-            result.put("type", "speaker");
-            result.put("name", "Altavoz del teléfono");
+            result.put("deviceType", "speaker");
+            result.put("deviceName", "Altavoz del teléfono");
         } catch (JSONException e) {
             // Manejo de excepción
         }

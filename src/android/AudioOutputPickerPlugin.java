@@ -11,24 +11,45 @@ import android.media.AudioDeviceInfo;
 import android.media.AudioManager;
 import android.os.Build;
 import android.util.Log;
+import androidx.core.content.ContextCompat;
 import org.apache.cordova.*;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class AudioOutputPickerPlugin extends CordovaPlugin {
     private static final String TAG = "AudioOutputPicker";
+    private boolean isLoggingEnabled = false; // New flag to control logging
     private CallbackContext eventCallbackContext = null;
     private AudioManager audioManager;
     private boolean isReceiverRegistered = false;
+    private AtomicBoolean periodicCheckRunning = new AtomicBoolean(false);
+
+    // New method to enable or disable logging
+    public void setLoggingEnabled(boolean enabled) {
+        isLoggingEnabled = enabled;
+    }
+
+    private void log(String message) {
+        if (isLoggingEnabled) {
+            Log.d(TAG, message);
+        }
+    }
+
+    private void logError(String message, Throwable throwable) {
+        if (isLoggingEnabled) {
+            Log.e(TAG, message, throwable);
+        }
+    }
 
     private final BroadcastReceiver audioReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
             String action = intent.getAction();
-            Log.d(TAG, "Evento recibido: " + action);
+            log("Evento recibido: " + action);
 
             // Analicemos el evento específico para mejorar el manejo
             String eventType = "unknown";
@@ -41,7 +62,7 @@ public class AudioOutputPickerPlugin extends CordovaPlugin {
             }
 
             final String finalEventType = eventType;
-            Log.d(TAG, "Tipo de evento detectado: " + finalEventType);
+            log("Tipo de evento detectado: " + finalEventType);
 
             // Esperar un poco para que el sistema actualice el estado de audio
             cordova.getThreadPool().execute(new Runnable() {
@@ -71,18 +92,22 @@ public class AudioOutputPickerPlugin extends CordovaPlugin {
                                     }
                                 }
                             } catch (Exception e) {
-                                Log.e(TAG, "Error al agregar información al JSON", e);
+                                logError("Error al agregar información al JSON", e);
                             }
 
-                            PluginResult result = new PluginResult(PluginResult.Status.OK, deviceInfo);
-                            result.setKeepCallback(true);
-                            eventCallbackContext.sendPluginResult(result);
-                            Log.d(TAG, "Evento enviado al callback: " + deviceInfo.toString());
+                            if (eventCallbackContext != null) { // Verificar de nuevo por si cambió mientras esperábamos
+                                PluginResult result = new PluginResult(PluginResult.Status.OK, deviceInfo);
+                                result.setKeepCallback(true);
+                                eventCallbackContext.sendPluginResult(result);
+                                log("Evento enviado al callback: " + deviceInfo.toString());
+                            } else {
+                                log("El callback fue anulado durante el procesamiento");
+                            }
                         } else {
-                            Log.w(TAG, "Evento recibido pero no hay callback registrado");
+                            log("Evento recibido pero no hay callback registrado");
                         }
                     } catch (Exception e) {
-                        Log.e(TAG, "Error al procesar evento", e);
+                        logError("Error al procesar evento", e);
                     }
                 }
             });
@@ -91,7 +116,7 @@ public class AudioOutputPickerPlugin extends CordovaPlugin {
 
     @Override
     public void pluginInitialize() {
-        Log.d(TAG, "Inicializando plugin AudioOutputPicker");
+        log("Inicializando plugin AudioOutputPicker");
 
         audioManager = (AudioManager) cordova.getActivity().getSystemService(Context.AUDIO_SERVICE);
 
@@ -101,50 +126,65 @@ public class AudioOutputPickerPlugin extends CordovaPlugin {
     // Método adicional para verificar el estado de los dispositivos de audio
     // y emitir actualizaciones si es necesario
     private void startPeriodicCheck() {
-        cordova.getThreadPool().execute(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    Thread.sleep(2000); // Esperar 2 segundos antes de comenzar
+        if (periodicCheckRunning.compareAndSet(false, true)) {
+            log("Iniciando verificación periódica");
 
-                    String previousDeviceType = null;
+            cordova.getThreadPool().execute(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        Thread.sleep(2000); // Esperar 2 segundos antes de comenzar
 
-                    while (eventCallbackContext != null) {
-                        JSONObject currentDevice = getAudioOutputInfo();
-                        String currentDeviceType = currentDevice.getString("deviceType");
+                        String previousDeviceType = null;
 
-                        // Si cambió el tipo de dispositivo desde la última verificación, enviar un evento
-                        if (previousDeviceType != null && !previousDeviceType.equals(currentDeviceType)) {
-                            Log.d(TAG, "Cambio de dispositivo detectado en verificación periódica: " +
-                                    previousDeviceType + " -> " + currentDeviceType);
+                        while (eventCallbackContext != null && periodicCheckRunning.get()) {
+                            JSONObject currentDevice = getAudioOutputInfo();
+                            String currentDeviceType = currentDevice.getString("deviceType");
 
-                            try {
-                                currentDevice.put("event", "periodic_check");
-                                currentDevice.put("eventType", currentDeviceType.equals("bluetooth") ? "connection" : "disconnection");
-                                currentDevice.put("previousDevice", previousDeviceType);
-                            } catch (JSONException e) {
-                                Log.e(TAG, "Error al agregar información de verificación periódica", e);
+                            // Si cambió el tipo de dispositivo desde la última verificación, enviar un evento
+                            if (previousDeviceType != null && !previousDeviceType.equals(currentDeviceType)) {
+                                log("Cambio de dispositivo detectado en verificación periódica: " +
+                                        previousDeviceType + " -> " + currentDeviceType);
+
+                                try {
+                                    currentDevice.put("event", "periodic_check");
+                                    currentDevice.put("eventType", currentDeviceType.equals("bluetooth") ? "connection" : "disconnection");
+                                    currentDevice.put("previousDevice", previousDeviceType);
+                                } catch (JSONException e) {
+                                    logError("Error al agregar información de verificación periódica", e);
+                                }
+
+                                if (eventCallbackContext != null) { // Verificar de nuevo antes de enviar
+                                    PluginResult result = new PluginResult(PluginResult.Status.OK, currentDevice);
+                                    result.setKeepCallback(true);
+                                    eventCallbackContext.sendPluginResult(result);
+                                    log("Evento de verificación periódica enviado: " + currentDevice.toString());
+                                }
                             }
 
-                            PluginResult result = new PluginResult(PluginResult.Status.OK, currentDevice);
-                            result.setKeepCallback(true);
-                            eventCallbackContext.sendPluginResult(result);
-                            Log.d(TAG, "Evento de verificación periódica enviado: " + currentDevice.toString());
+                            previousDeviceType = currentDeviceType;
+                            Thread.sleep(5000); // Verificar cada 5 segundos
                         }
 
-                        previousDeviceType = currentDeviceType;
-                        Thread.sleep(5000); // Verificar cada 5 segundos
+                        log("Verificación periódica detenida");
+                    } catch (Exception e) {
+                        logError("Error en verificación periódica", e);
+                    } finally {
+                        periodicCheckRunning.set(false);
                     }
-                } catch (Exception e) {
-                    Log.e(TAG, "Error en verificación periódica", e);
                 }
-            }
-        });
+            });
+        }
+    }
+
+    private void stopPeriodicCheck() {
+        periodicCheckRunning.set(false);
+        log("Señal de detención para verificación periódica enviada");
     }
 
     private void registerReceiver() {
         if (isReceiverRegistered) {
-            Log.d(TAG, "Receptor ya está registrado, no es necesario registrarlo de nuevo");
+            log("Receptor ya está registrado, no es necesario registrarlo de nuevo");
             return;
         }
 
@@ -155,29 +195,42 @@ public class AudioOutputPickerPlugin extends CordovaPlugin {
         filter.addAction(AudioManager.ACTION_AUDIO_BECOMING_NOISY);
         filter.addAction(AudioManager.ACTION_HEADSET_PLUG);
 
-        // Eventos para Bluetooth - usar solo acciones publicas documentadas
+        // Bluetooth - todos los eventos posibles
         filter.addAction(BluetoothDevice.ACTION_ACL_CONNECTED);
         filter.addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED);
         filter.addAction(BluetoothAdapter.ACTION_STATE_CHANGED);
         filter.addAction(BluetoothAdapter.ACTION_CONNECTION_STATE_CHANGED);
 
+        // Añadir eventos específicos de A2DP y SCO
+        filter.addAction("android.bluetooth.a2dp.profile.action.CONNECTION_STATE_CHANGED");
+        filter.addAction("android.bluetooth.headset.profile.action.CONNECTION_STATE_CHANGED");
+        filter.addAction("android.bluetooth.a2dp.profile.action.PLAYING_STATE_CHANGED");
+
+        // También monitorizar cambios en el AudioManager
+        filter.addAction("android.media.ACTION_SCO_AUDIO_STATE_UPDATED");
+
+        // Importante: monitorizar cambios generales en el routing de audio
+        filter.addAction("android.media.AUDIO_DEVICE_ADDED");
+        filter.addAction("android.media.AUDIO_DEVICE_REMOVED");
+
         // Versión con prioridades para aumentar la posibilidad de recibir los eventos
         filter.setPriority(IntentFilter.SYSTEM_HIGH_PRIORITY);
 
-        //Log.d(TAG, "Registrando receptor para: " + Arrays.toString(filter.getActionsArray()));
+        //log("Registrando receptor para: " + Arrays.toString(filter.getActionsArray()));
 
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                cordova.getActivity().registerReceiver(audioReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
-                Log.d(TAG, "Receptor registrado con RECEIVER_NOT_EXPORTED");
-            } else {
-                cordova.getActivity().registerReceiver(audioReceiver, filter);
-                Log.d(TAG, "Receptor registrado sin flags");
-            }
+            // Usar ContextCompat para compatibilidad con diferentes versiones de Android
+            ContextCompat.registerReceiver(
+                    cordova.getActivity(),   // contexto
+                    audioReceiver,           // receptor
+                    filter,                  // filtro
+                    ContextCompat.RECEIVER_NOT_EXPORTED  // flag
+            );
+            log("Receptor registrado con RECEIVER_NOT_EXPORTED usando ContextCompat");
 
             isReceiverRegistered = true;
         } catch (Exception e) {
-            Log.e(TAG, "Error al registrar receptor", e);
+            logError("Error al registrar receptor", e);
         }
     }
 
@@ -186,28 +239,29 @@ public class AudioOutputPickerPlugin extends CordovaPlugin {
             try {
                 cordova.getActivity().unregisterReceiver(audioReceiver);
                 isReceiverRegistered = false;
-                Log.d(TAG, "Receptor de audio desregistrado");
+                log("Receptor de audio desregistrado");
             } catch (Exception e) {
-                Log.e(TAG, "Error al desregistrar receptor", e);
+                logError("Error al desregistrar receptor", e);
             }
         }
     }
 
     @Override
     public void onDestroy() {
+        stopPeriodicCheck();
         unregisterReceiver();
         super.onDestroy();
     }
 
     @Override
     public boolean execute(String action, JSONArray args, CallbackContext callbackContext) throws JSONException {
-        Log.d(TAG, "Ejecutando acción: " + action);
+        log("Ejecutando acción: " + action);
 
         switch (action) {
             case "getCurrentAudioOutput":
                 JSONObject deviceInfo = getAudioOutputInfo();
                 callbackContext.success(deviceInfo);
-                Log.d(TAG, "getCurrentAudioOutput retornó: " + deviceInfo.toString());
+                log("getCurrentAudioOutput retornó: " + deviceInfo.toString());
                 return true;
 
             case "startAudioOutputListener":
@@ -225,32 +279,39 @@ public class AudioOutputPickerPlugin extends CordovaPlugin {
                         try {
                             currentDevice.put("event", "initial_state");
                         } catch (JSONException e) {
-                            Log.e(TAG, "Error al agregar evento inicial", e);
+                            logError("Error al agregar evento inicial", e);
                         }
 
-                        PluginResult initialResult = new PluginResult(PluginResult.Status.OK, currentDevice);
-                        initialResult.setKeepCallback(true);
-                        callbackContext.sendPluginResult(initialResult);
-                        Log.d(TAG, "Estado inicial enviado: " + currentDevice.toString());
+                        if (eventCallbackContext != null) {
+                            PluginResult initialResult = new PluginResult(PluginResult.Status.OK, currentDevice);
+                            initialResult.setKeepCallback(true);
+                            eventCallbackContext.sendPluginResult(initialResult);
+                            log("Estado inicial enviado: " + currentDevice.toString());
+                        }
                     }
                 });
 
                 PluginResult pluginResult = new PluginResult(PluginResult.Status.NO_RESULT);
                 pluginResult.setKeepCallback(true);
                 callbackContext.sendPluginResult(pluginResult);
-                Log.d(TAG, "Listener de audio iniciado");
+                log("Listener de audio iniciado");
                 return true;
 
             case "stopAudioOutputListener":
+                log("Deteniendo listener de audio...");
+                // Primero detener la verificación periódica
+                stopPeriodicCheck();
+                // Luego eliminar la referencia al callback
                 this.eventCallbackContext = null;
-                unregisterReceiver(); // Desregistramos el receptor cuando se detiene el listener
-                callbackContext.success("Listener detenido");
-                Log.d(TAG, "Listener de audio detenido");
+                // Finalmente desregistrar el receptor
+                unregisterReceiver();
+                callbackContext.success("Listener detenido completamente");
+                log("Listener de audio detenido completamente");
                 return true;
 
             default:
                 callbackContext.error("Invalid action");
-                Log.e(TAG, "Acción inválida: " + action);
+                log("Acción inválida: " + action);
                 return false;
         }
     }
@@ -260,10 +321,10 @@ public class AudioOutputPickerPlugin extends CordovaPlugin {
 
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                Log.d(TAG, "Obteniendo dispositivos de audio en Android 6+");
+                log("Obteniendo dispositivos de audio en Android 6+");
                 AudioDeviceInfo[] devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS);
 
-                Log.d(TAG, "Número de dispositivos de salida: " + devices.length);
+                log("Número de dispositivos de salida: " + devices.length);
 
                 // Primer paso: buscar dispositivos Bluetooth activos
                 for (AudioDeviceInfo deviceInfo : devices) {
@@ -271,7 +332,7 @@ public class AudioOutputPickerPlugin extends CordovaPlugin {
                         int type = deviceInfo.getType();
                         String typeStr = getDeviceTypeString(type);
                         String productName = deviceInfo.getProductName().toString();
-                        Log.d(TAG, "Dispositivo encontrado: tipo=" + typeStr + ", nombre=" + productName);
+                        log("Dispositivo encontrado: tipo=" + typeStr + ", nombre=" + productName);
 
                         if (type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
                             result.put("deviceType", "bluetooth");
@@ -295,21 +356,21 @@ public class AudioOutputPickerPlugin extends CordovaPlugin {
 
                 // Comprobación adicional para Bluetooth usando métodos alternativos
                 if (audioManager.isBluetoothA2dpOn() || audioManager.isBluetoothScoOn()) {
-                    Log.d(TAG, "Bluetooth detectado mediante isBluetoothA2dpOn/isBluetoothScoOn");
+                    log("Bluetooth detectado mediante isBluetoothA2dpOn/isBluetoothScoOn");
                     result.put("deviceType", "bluetooth");
                     result.put("deviceName", "Dispositivo Bluetooth");
                     return result;
                 }
             } else {
-                Log.d(TAG, "Usando métodos legacy para detectar audio en Android <6");
+                log("Usando métodos legacy para detectar audio en Android <6");
                 // Para versiones más antiguas
                 if (audioManager.isBluetoothA2dpOn() || audioManager.isBluetoothScoOn()) {
-                    Log.d(TAG, "Bluetooth A2DP o SCO está activado");
+                    log("Bluetooth A2DP o SCO está activado");
                     result.put("deviceType", "bluetooth");
                     result.put("deviceName", "Dispositivo Bluetooth");
                     return result;
                 } else if (audioManager.isWiredHeadsetOn()) {
-                    Log.d(TAG, "Auricular con cable detectado");
+                    log("Auricular con cable detectado");
                     result.put("deviceType", "wired_headset");
                     result.put("deviceName", "Auriculares cableados");
                     return result;
@@ -317,11 +378,11 @@ public class AudioOutputPickerPlugin extends CordovaPlugin {
             }
 
             // Default
-            Log.d(TAG, "Ningún dispositivo especial detectado, usando altavoz");
+            log("Ningún dispositivo especial detectado, usando altavoz");
             result.put("deviceType", "speaker");
             result.put("deviceName", "Altavoz del teléfono");
         } catch (Exception e) {
-            Log.e(TAG, "Error al obtener información del dispositivo de audio", e);
+            logError("Error al obtener información del dispositivo de audio", e);
             try {
                 result.put("deviceType", "error");
                 result.put("deviceName", "Error: " + e.getMessage());
